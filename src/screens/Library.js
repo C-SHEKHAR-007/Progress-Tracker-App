@@ -532,9 +532,10 @@ export default function LibraryScreen({ navigation }) {
         <TouchableOpacity
           onPress={() => navigation.navigate('AddFiles')}
           activeOpacity={0.9}
+          style={styles.fabButton}
         >
           <LinearGradient
-            colors={['#6366f1', '#8b5cf6']}
+            colors={['#6366f1', '#4f46e5']}
             style={styles.fab}
           >
             <Ionicons name="add" size={28} color="#fff" />
@@ -633,7 +634,7 @@ const styles = StyleSheet.create({
   },
   screenTitle: {
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#fff',
     letterSpacing: -0.5,
   },
@@ -907,19 +908,22 @@ const styles = StyleSheet.create({
   fabContainer: {
     position: 'absolute',
     bottom: 24,
-    right: 24,
+    right: 30,
   },
-  fab: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    justifyContent: 'center',
-    alignItems: 'center',
+  fabButton: {
+    borderRadius: 28,
+    overflow: 'hidden',
+    elevation: 8,
     shadowColor: '#6366f1',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
-    elevation: 8,
+  },
+  fab: {
+    width: 56,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,

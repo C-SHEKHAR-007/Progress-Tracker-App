@@ -499,10 +499,10 @@ const styles = StyleSheet.create({
   statsContainer: {
     paddingHorizontal: 16,
     paddingBottom: 8,
-    gap: 12,
+    gap: 7,
   },
   statCard: {
-    marginRight: 12,
+    marginRight: 7,
     borderRadius: 20,
     overflow: 'hidden',
   },
@@ -753,6 +753,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginHorizontal: 20,
+    marginTop: 30,
     borderRadius: 24,
     overflow: 'hidden',
   },

@@ -4,11 +4,16 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   Dimensions,
   StatusBar,
   ActivityIndicator,
   Alert,
+  BackHandler,
+  Animated,
+  Platform,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -25,32 +30,108 @@ export default function PlayerScreen({ route, navigation }) {
   const videoRef = useRef(null);
   const [status, setStatus] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  const [showControls, setShowControls] = useState(true);
+  const [showControls, setShowControls] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState(null);
   const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [dimensions, setDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT });
 
   const playbackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-
   const controlsTimeout = useRef(null);
+  const controlsOpacity = useRef(new Animated.Value(0)).current;
 
-  // Hide controls after delay
+  // Hide navigation header
+  useEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    });
+  }, [navigation]);
+
+  // Handle dimension changes
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setDimensions({ width: window.width, height: window.height });
+    });
+    return () => subscription?.remove();
+  }, []);
+
+  // Handle back button and cleanup orientation
+  useEffect(() => {
+    const handleBackPress = () => {
+      handleGoBack();
+      return true;
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+
+    return () => {
+      backHandler.remove();
+      // Always reset to portrait on unmount
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      if (controlsTimeout.current) {
+        clearTimeout(controlsTimeout.current);
+      }
+    };
+  }, []);
+
+  // Go back with proper cleanup
+  const handleGoBack = useCallback(async () => {
+    // Save progress before leaving
+    if (status.positionMillis && status.durationMillis) {
+      const progress = Math.round((status.positionMillis / status.durationMillis) * 100);
+      await updateProgress(item.id, progress, status.positionMillis / 1000);
+    }
+    
+    // Reset orientation
+    await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    setIsFullscreen(false);
+    
+    navigation.goBack();
+  }, [status, item.id, updateProgress, navigation]);
+
+  // Hide controls with animation
   const hideControlsWithDelay = useCallback(() => {
     if (controlsTimeout.current) {
       clearTimeout(controlsTimeout.current);
     }
     controlsTimeout.current = setTimeout(() => {
       if (status.isPlaying) {
-        setShowControls(false);
+        Animated.timing(controlsOpacity, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }).start(() => setShowControls(false));
       }
-    }, 3000);
-  }, [status.isPlaying]);
+    }, 2000);
+  }, [status.isPlaying, controlsOpacity]);
 
-  // Show controls temporarily
+  // Toggle controls on screen touch
   const handleScreenTouch = useCallback(() => {
-    setShowControls(true);
-    hideControlsWithDelay();
-  }, [hideControlsWithDelay]);
+    if (controlsTimeout.current) {
+      clearTimeout(controlsTimeout.current);
+    }
+    
+    if (showControls) {
+      // Hide controls immediately
+      Animated.timing(controlsOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => setShowControls(false));
+    } else {
+      // Show controls
+      setShowControls(true);
+      Animated.timing(controlsOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      // Auto-hide if playing
+      if (status.isPlaying) {
+        hideControlsWithDelay();
+      }
+    }
+  }, [showControls, status.isPlaying, hideControlsWithDelay, controlsOpacity]);
 
   // Check if file exists
   useEffect(() => {
@@ -75,20 +156,6 @@ export default function PlayerScreen({ route, navigation }) {
       setIsLoading(false);
     }
   }, [item]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (controlsTimeout.current) {
-        clearTimeout(controlsTimeout.current);
-      }
-      // Save final progress on exit
-      if (status.positionMillis && status.durationMillis) {
-        const progress = Math.round((status.positionMillis / status.durationMillis) * 100);
-        updateProgress(item.id, progress, status.positionMillis / 1000);
-      }
-    };
-  }, [status, item.id, updateProgress]);
 
   // Handle video status updates
   const handlePlaybackStatusUpdate = useCallback((newStatus) => {
@@ -131,14 +198,19 @@ export default function PlayerScreen({ route, navigation }) {
     }
   };
 
-  // Fullscreen toggle
+  // Fullscreen toggle with proper orientation handling
   const toggleFullscreen = async () => {
-    if (isFullscreen) {
-      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
-    } else {
-      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    try {
+      if (isFullscreen) {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        setIsFullscreen(false);
+      } else {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        setIsFullscreen(true);
+      }
+    } catch (err) {
+      console.error('Orientation error:', err);
     }
-    setIsFullscreen(!isFullscreen);
   };
 
   // Seek forward/backward
@@ -167,8 +239,13 @@ export default function PlayerScreen({ route, navigation }) {
   const formatTime = (millis) => {
     if (!millis) return '0:00';
     const totalSeconds = Math.floor(millis / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
@@ -186,13 +263,25 @@ export default function PlayerScreen({ route, navigation }) {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Complete',
-          onPress: () => {
-            markCompleted(item.id, true);
-            navigation.goBack();
+          onPress: async () => {
+            await markCompleted(item.id, true);
+            handleGoBack();
           },
         },
       ]
     );
+  };
+
+  // Handle progress bar touch
+  const handleProgressTouch = async (event) => {
+    if (!status.durationMillis || !videoRef.current) return;
+    
+    const touchX = event.nativeEvent.locationX;
+    const progressBarWidth = dimensions.width - 120; // Account for padding and time labels
+    const seekPercent = Math.max(0, Math.min(1, touchX / progressBarWidth));
+    const seekPosition = seekPercent * status.durationMillis;
+    
+    await videoRef.current.setPositionAsync(seekPosition);
   };
 
   // Render PDF viewer
@@ -209,137 +298,185 @@ export default function PlayerScreen({ route, navigation }) {
   // Render video player
   return (
     <View style={[styles.container, isFullscreen && styles.fullscreenContainer]}>
-      <StatusBar hidden={isFullscreen} />
+      <StatusBar hidden={isFullscreen || showControls === false} barStyle="light-content" />
 
-      <TouchableOpacity
-        style={styles.videoContainer}
-        activeOpacity={1}
-        onPress={handleScreenTouch}
-      >
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#6366f1" />
-            <Text style={styles.loadingText}>Loading video...</Text>
-          </View>
-        ) : error ? (
-          <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle" size={48} color="#ef4444" />
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.backButtonText}>Go Back</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <Video
-            ref={videoRef}
-            source={{ uri: item.file_uri || item.file_path }}
-            style={styles.video}
-            resizeMode={ResizeMode.CONTAIN}
-            shouldPlay={false}
-            positionMillis={item.last_position ? item.last_position * 1000 : 0}
-            onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-            onError={(err) => {
-              console.error('Video error:', err);
-              setError('Failed to load video');
-            }}
-          />
-        )}
-
-        {/* Controls Overlay */}
-        {showControls && !isLoading && !error && (
-          <View style={styles.controlsOverlay}>
-            {/* Header */}
-            <View style={styles.header}>
-              <TouchableOpacity
-                style={styles.headerButton}
-                onPress={() => navigation.goBack()}
+      <TouchableWithoutFeedback onPress={handleScreenTouch}>
+        <View style={styles.videoContainer}>
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <LinearGradient
+                colors={['#6366f130', '#8b5cf630']}
+                style={styles.loadingIconBg}
               >
-                <Ionicons name="chevron-down" size={28} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.title} numberOfLines={1}>
-                {item.name}
-              </Text>
-              <TouchableOpacity
-                style={styles.headerButton}
-                onPress={handleMarkComplete}
+                <ActivityIndicator size="large" color="#6366f1" />
+              </LinearGradient>
+              <Text style={styles.loadingText}>Loading video...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.errorContainer}>
+              <LinearGradient
+                colors={['#ef444430', '#ef444420']}
+                style={styles.errorIconBg}
               >
-                <Ionicons name="checkmark-circle-outline" size={28} color="#fff" />
+                <Ionicons name="alert-circle" size={48} color="#ef4444" />
+              </LinearGradient>
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity
+                style={styles.errorBackButton}
+                onPress={handleGoBack}
+              >
+                <LinearGradient
+                  colors={['#6366f1', '#8b5cf6']}
+                  style={styles.errorBackButtonGradient}
+                >
+                  <Ionicons name="arrow-back" size={18} color="#fff" />
+                  <Text style={styles.errorBackButtonText}>Go Back</Text>
+                </LinearGradient>
               </TouchableOpacity>
             </View>
+          ) : (
+            <Video
+              ref={videoRef}
+              source={{ uri: item.file_uri || item.file_path }}
+              style={styles.video}
+              resizeMode={ResizeMode.CONTAIN}
+              shouldPlay={true}
+              positionMillis={item.last_position ? item.last_position * 1000 : 0}
+              onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
+              onError={(err) => {
+                console.error('Video error:', err);
+                setError('Failed to load video');
+              }}
+            />
+          )}
 
-            {/* Center Controls */}
-            <View style={styles.centerControls}>
-              <TouchableOpacity
-                style={styles.seekButton}
-                onPress={() => seek(-10)}
-              >
-                <Ionicons name="play-back" size={32} color="#fff" />
-                <Text style={styles.seekText}>10s</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.playButton}
-                onPress={togglePlayPause}
-              >
-                <Ionicons
-                  name={status.isPlaying ? 'pause' : 'play'}
-                  size={48}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.seekButton}
-                onPress={() => seek(10)}
-              >
-                <Ionicons name="play-forward" size={32} color="#fff" />
-                <Text style={styles.seekText}>10s</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Bottom Controls */}
-            <View style={styles.bottomControls}>
-              {/* Progress Bar */}
-              <View style={styles.progressContainer}>
-                <Text style={styles.timeText}>
-                  {formatTime(status.positionMillis)}
-                </Text>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[styles.progressFill, { width: `${progressPercent}%` }]}
-                  />
+          {/* Controls Overlay */}
+          {showControls && !isLoading && !error && (
+            <Animated.View style={[styles.controlsOverlay, { opacity: controlsOpacity }]}>
+              {/* Gradient overlay for better visibility */}
+              <LinearGradient
+                colors={['rgba(0,0,0,0.7)', 'transparent', 'transparent', 'rgba(0,0,0,0.8)']}
+                locations={[0, 0.2, 0.7, 1]}
+                style={StyleSheet.absoluteFill}
+              />
+              
+              {/* Header */}
+              <View style={[styles.header, isFullscreen && styles.headerFullscreen]}>
+                <TouchableOpacity
+                  style={styles.headerButton}
+                  onPress={handleGoBack}
+                >
+                  <View style={styles.headerButtonBg}>
+                    <Ionicons name={isFullscreen ? "arrow-back" : "chevron-down"} size={24} color="#fff" />
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.headerTitleContainer}>
+                  <Text style={styles.title} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.subtitle}>
+                    {item.progress || 0}% completed
+                  </Text>
                 </View>
-                <Text style={styles.timeText}>
-                  {formatTime(status.durationMillis)}
-                </Text>
+                <TouchableOpacity
+                  style={styles.headerButton}
+                  onPress={handleMarkComplete}
+                >
+                  <View style={styles.headerButtonBg}>
+                    <Ionicons name="checkmark-circle-outline" size={24} color="#10b981" />
+                  </View>
+                </TouchableOpacity>
               </View>
 
-              {/* Action Buttons */}
-              <View style={styles.actionButtons}>
+              {/* Center Controls */}
+              <View style={styles.centerControls}>
                 <TouchableOpacity
-                  style={styles.speedButton}
-                  onPress={togglePlaybackRate}
+                  style={styles.seekButton}
+                  onPress={() => seek(-10)}
                 >
-                  <Text style={styles.speedText}>{playbackRate}x</Text>
+                  <View style={styles.seekButtonInner}>
+                    <Ionicons name="play-back" size={28} color="#fff" />
+                  </View>
+                  <Text style={styles.seekText}>10s</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={toggleFullscreen}
+                  style={styles.playButton}
+                  onPress={togglePlayPause}
                 >
-                  <Ionicons
-                    name={isFullscreen ? 'contract' : 'expand'}
-                    size={24}
-                    color="#fff"
-                  />
+                  <View style={styles.playButtonInner}>
+                    <Ionicons
+                      name={status.isPlaying ? 'pause' : 'play'}
+                      size={40}
+                      color="#fff"
+                      style={!status.isPlaying && { marginLeft: 4 }}
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.seekButton}
+                  onPress={() => seek(10)}
+                >
+                  <View style={styles.seekButtonInner}>
+                    <Ionicons name="play-forward" size={28} color="#fff" />
+                  </View>
+                  <Text style={styles.seekText}>10s</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          </View>
-        )}
-      </TouchableOpacity>
+
+              {/* Bottom Controls */}
+              <View style={[styles.bottomControls, isFullscreen && styles.bottomControlsFullscreen]}>
+                {/* Progress Bar */}
+                <View style={styles.progressContainer}>
+                  <Text style={styles.timeText}>
+                    {formatTime(status.positionMillis)}
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.progressBarTouchable}
+                    onPress={handleProgressTouch}
+                    activeOpacity={1}
+                  >
+                    <View style={styles.progressBar}>
+                      <LinearGradient
+                        colors={['#6366f1', '#8b5cf6']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={[styles.progressFill, { width: `${progressPercent}%` }]}
+                      />
+                      <View style={[styles.progressThumb, { left: `${progressPercent}%` }]} />
+                    </View>
+                  </TouchableOpacity>
+                  <Text style={styles.timeText}>
+                    {formatTime(status.durationMillis)}
+                  </Text>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity
+                    style={styles.speedButton}
+                    onPress={togglePlaybackRate}
+                  >
+                    <Text style={styles.speedText}>{playbackRate}x</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={toggleFullscreen}
+                  >
+                    <Ionicons
+                      name={isFullscreen ? 'contract-outline' : 'expand-outline'}
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+      </TouchableWithoutFeedback>
     </View>
   );
 }
@@ -347,7 +484,7 @@ export default function PlayerScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0a0a0f',
   },
   fullscreenContainer: {
     position: 'absolute',
@@ -355,11 +492,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    zIndex: 999,
   },
   videoContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#000',
   },
   video: {
     width: '100%',
@@ -367,54 +506,97 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingIconBg: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   loadingText: {
-    color: '#64748b',
-    marginTop: 12,
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '500',
   },
   errorContainer: {
     alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  errorIconBg: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   errorText: {
     color: '#ef4444',
-    marginTop: 12,
     fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 24,
   },
-  backButton: {
-    marginTop: 20,
-    backgroundColor: '#6366f1',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
+  errorBackButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
   },
-  backButtonText: {
+  errorBackButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    gap: 8,
+  },
+  errorBackButtonText: {
     color: '#fff',
     fontWeight: '600',
+    fontSize: 16,
   },
   controlsOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'space-between',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 50,
+    paddingTop: Platform.OS === 'ios' ? 50 : 40,
     paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  headerFullscreen: {
+    paddingTop: 20,
+    paddingHorizontal: 24,
   },
   headerButton: {
+    padding: 4,
+  },
+  headerButtonBg: {
     width: 44,
     height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  title: {
+  headerTitleContainer: {
     flex: 1,
+    marginHorizontal: 12,
+  },
+  title: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
-    marginHorizontal: 8,
+  },
+  subtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 2,
   },
   centerControls: {
     flexDirection: 'row',
@@ -422,28 +604,46 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   seekButton: {
-    width: 60,
-    height: 60,
+    alignItems: 'center',
+    marginHorizontal: 24,
+  },
+  seekButtonInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 20,
   },
   seekText: {
     color: '#fff',
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 6,
+    fontWeight: '500',
   },
   playButton: {
+    marginHorizontal: 16,
+  },
+  playButtonInner: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(99, 102, 241, 0.8)',
+    backgroundColor: 'rgba(99, 102, 241, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   bottomControls: {
-    paddingHorizontal: 16,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+  },
+  bottomControlsFullscreen: {
+    paddingHorizontal: 32,
+    paddingBottom: 24,
   },
   progressContainer: {
     flexDirection: 'row',
@@ -453,43 +653,64 @@ const styles = StyleSheet.create({
   timeText: {
     color: '#fff',
     fontSize: 12,
+    fontWeight: '500',
     width: 50,
+    fontVariant: ['tabular-nums'],
+  },
+  progressBarTouchable: {
+    flex: 1,
+    paddingVertical: 10,
+    marginHorizontal: 8,
   },
   progressBar: {
-    flex: 1,
     height: 4,
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     borderRadius: 2,
-    marginHorizontal: 12,
-    overflow: 'hidden',
+    overflow: 'visible',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#6366f1',
     borderRadius: 2,
+  },
+  progressThumb: {
+    position: 'absolute',
+    top: -5,
+    marginLeft: -7,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   actionButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   actionButton: {
     width: 44,
     height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   speedButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 8,
-    marginRight: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   speedText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
 });

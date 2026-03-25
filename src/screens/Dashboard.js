@@ -805,7 +805,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     bottom: 24,
-    right: 20,
+    right: 30,
     borderRadius: 28,
     overflow: 'hidden',
     elevation: 8,

@@ -23,10 +23,10 @@ A React Native mobile app for tracking your learning progress with videos and PD
 │  Context (ItemsContext - state management)              │
 │           ↓                                             │
 │  Services                                               │
-│  ├── database.js (SQLite)                              │
-│  └── fileService.js (expo-file-system)                 │
+│  ├── database.js (SQLite)                               │
+│  └── fileService.js (expo-file-system)                  │
 │           ↓                                             │
-│  Device Storage (SQLite DB + Local Files)              │
+│  Device Storage (SQLite DB + Local Files)               │
 └─────────────────────────────────────────────────────────┘
 ```
 

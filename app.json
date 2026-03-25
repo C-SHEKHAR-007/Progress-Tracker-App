@@ -48,8 +48,7 @@
         }
       ],
       "expo-asset",
-      "expo-sqlite",
-      "expo-font"
+      "expo-sqlite"
     ],
     "extra": {
       "eas": {

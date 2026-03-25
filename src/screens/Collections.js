@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useItems } from '../context/ItemsContext';
 
@@ -153,8 +154,14 @@ export default function CollectionsScreen({ navigation }) {
       <TouchableOpacity
         style={styles.fab}
         onPress={() => setModalVisible(true)}
+        activeOpacity={0.9}
       >
-        <Ionicons name="add" size={28} color="#fff" />
+        <LinearGradient
+          colors={['#6366f1', '#4f46e5']}
+          style={styles.fabGradient}
+        >
+          <Ionicons name="add" size={28} color="#fff" />
+        </LinearGradient>
       </TouchableOpacity>
 
       {/* Create Collection Modal */}
@@ -311,18 +318,20 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
+    right: 30,
     borderRadius: 28,
-    backgroundColor: '#6366f1',
-    justifyContent: 'center',
-    alignItems: 'center',
+    overflow: 'hidden',
     elevation: 8,
     shadowColor: '#6366f1',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  fabGradient: {
+    width: 56,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,
